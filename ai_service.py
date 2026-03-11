@@ -4,7 +4,7 @@ from typing import List, Dict, Any
 
 from openai import OpenAI, OpenAIError
 
-from .config import settings
+from config import settings
 
 
 client = OpenAI(api_key=settings.openai_api_key)

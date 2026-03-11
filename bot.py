@@ -4,12 +4,15 @@ from datetime import datetime
 from typing import List, Dict, Any
 
 from aiogram import Bot, Dispatcher, F, Router
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
+from aiogram.types import BotCommand
 from aiogram.filters import CommandStart, Command
 from aiogram.types import Message
 
-from .config import settings
-from .ai_service import generate_response
-from .database import (
+from config import settings
+from ai_service import generate_response
+from database import (
     create_user_if_not_exists,
     save_message,
     get_last_messages,
@@ -18,7 +21,7 @@ from .database import (
     increment_ai_message,
     get_user_stats,
 )
-from .prompts import SYSTEM_PROMPT
+from prompts import SYSTEM_PROMPT
 
 
 logging.basicConfig(
@@ -137,8 +140,6 @@ async def handle_text_message(message: Message) -> None:
         *history,
     ]
 
-    await message.chat.action.typing()
-
     try:
         # 5–6. Get AI response based on last messages.
         reply_text = await generate_response(messages)
@@ -166,9 +167,22 @@ async def handle_text_message(message: Message) -> None:
 
 
 async def main() -> None:
-    bot = Bot(token=settings.telegram_bot_token, parse_mode="HTML")
+    bot = Bot(
+        token=settings.telegram_bot_token,
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+    )
     dp = Dispatcher()
     dp.include_router(router)
+
+    # Set main menu commands in Telegram client.
+    await bot.set_my_commands(
+        [
+            BotCommand(command="start", description="Описание бота"),
+            BotCommand(command="help", description="Помощь"),
+            BotCommand(command="new", description="Начать новый диалог"),
+            BotCommand(command="stat", description="Показать мою статистику"),
+        ]
+    )
 
     logger.info("Bot is starting polling...")
     await dp.start_polling(bot)
