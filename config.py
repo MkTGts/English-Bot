@@ -9,7 +9,7 @@ load_dotenv()
 
 @dataclass
 class Settings:
-    openai_api_key: str
+    gemini_api_key: str
     telegram_bot_token: str
 
 
@@ -22,9 +22,8 @@ def _get_env(name: str) -> str:
         )
     return value
 
-
 settings = Settings(
-    openai_api_key=_get_env("OPENAI_API_KEY"),
+    gemini_api_key=_get_env("GEMINI_API_KEY"),
     telegram_bot_token=_get_env("TELEGRAM_BOT_TOKEN"),
 )
 
