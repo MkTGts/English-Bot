@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from datetime import datetime
 from typing import List, Dict, Any
 
 from aiogram import Bot, Dispatcher, F, Router
@@ -13,6 +14,9 @@ from .database import (
     save_message,
     get_last_messages,
     clear_dialog,
+    increment_user_message,
+    increment_ai_message,
+    get_user_stats,
 )
 from .prompts import SYSTEM_PROMPT
 
@@ -46,7 +50,8 @@ async def cmd_help(message: Message) -> None:
         "ℹ️ *Помощь*\n\n"
         "/start — краткое описание бота\n"
         "/help — эта справка\n"
-        "/new — начать новый диалог (очистить контекст)\n\n"
+        "/new — начать новый диалог (очистить контекст)\n"
+        "/stat — показать вашу статистику\n\n"
         "Дальше просто пиши мне сообщения *на английском языке*.\n"
         "Я буду отвечать на английском, поддерживать разговор и мягко исправлять ошибки "
         "с короткими объяснениями на русском."
@@ -67,6 +72,46 @@ async def cmd_new(message: Message) -> None:
     await message.answer(text)
 
 
+@router.message(Command("stat"))
+async def cmd_stat(message: Message) -> None:
+    """Show per‑user statistics."""
+    user_id = message.from_user.id if message.from_user else 0
+
+    # Ensure user exists so that stats row is present.
+    create_user_if_not_exists(user_id)
+    stats = get_user_stats(user_id)
+
+    if not stats:
+        text = (
+            "Пока нет данных по статистике.\n"
+            "Напишите мне пару сообщений на английском — и я начну её собирать."
+        )
+        await message.answer(text)
+        return
+
+    created_at_raw = stats.get("created_at")
+    created_at_str = ""
+    if created_at_raw:
+        # SQLite DEFAULT CURRENT_TIMESTAMP -> 'YYYY-MM-DD HH:MM:SS'
+        try:
+            dt = datetime.fromisoformat(str(created_at_raw))
+        except ValueError:
+            dt = None
+        if dt:
+            created_at_str = dt.strftime("%d.%m.%Y")
+
+    text = (
+        "📊 Ваша статистика\n\n"
+        f"Сообщений от вас: {stats['user_messages']}\n"
+        f"Ответов бота: {stats['ai_messages']}\n"
+        f"Всего сообщений в диалоге: {stats['messages_count']}\n\n"
+        "Дата начала использования:\n"
+        f"{created_at_str or '—'}\n\n"
+        "Продолжайте практиковать английский 🚀"
+    )
+    await message.answer(text)
+
+
 @router.message(F.text)
 async def handle_text_message(message: Message) -> None:
     user_id = message.from_user.id if message.from_user else 0
@@ -79,8 +124,9 @@ async def handle_text_message(message: Message) -> None:
     # 1–2. Ensure user exists in DB.
     create_user_if_not_exists(user_id)
 
-    # 3. Save user's message.
+    # 3. Save user's message and update stats.
     save_message(user_id, "user", user_text)
+    increment_user_message(user_id)
 
     # 4. Get last N messages for this user (context limited in DB).
     history = get_last_messages(user_id, limit=6)
@@ -111,8 +157,9 @@ async def handle_text_message(message: Message) -> None:
         )
         return
 
-    # 7. Save assistant reply to DB.
+    # 7. Save assistant reply to DB and update stats.
     save_message(user_id, "assistant", reply_text)
+    increment_ai_message(user_id)
 
     # 8. Send reply to user.
     await message.answer(reply_text)
@@ -132,5 +179,6 @@ if __name__ == "__main__":
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
         logger.info("Bot stopped.")
+
 
 

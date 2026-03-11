@@ -1,6 +1,6 @@
 import sqlite3
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 
 DB_PATH = Path(__file__).resolve().parent / "bot.db"
@@ -17,14 +17,30 @@ def _get_connection() -> sqlite3.Connection:
 conn = _get_connection()
 
 
+def _safe_add_column(column_def: str) -> None:
+    """
+    Try to add a column to the users table.
+    If the column already exists, ignore the error.
+    """
+    try:
+        with conn:
+            conn.execute(f"ALTER TABLE users ADD COLUMN {column_def}")
+    except sqlite3.OperationalError:
+        # Column already exists or other non‑critical error – ignore.
+        pass
+
+
 def _init_db() -> None:
-    """Create tables if they don't exist yet."""
+    """Create tables if they don't exist yet and ensure required columns exist."""
     with conn:
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 telegram_id INTEGER UNIQUE,
+                messages_count INTEGER DEFAULT 0,
+                user_messages INTEGER DEFAULT 0,
+                ai_messages INTEGER DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
             """
@@ -40,6 +56,11 @@ def _init_db() -> None:
             )
             """
         )
+
+    # For existing databases created with an older schema, add missing columns.
+    _safe_add_column("messages_count INTEGER DEFAULT 0")
+    _safe_add_column("user_messages INTEGER DEFAULT 0")
+    _safe_add_column("ai_messages INTEGER DEFAULT 0")
 
 
 _init_db()
@@ -103,4 +124,66 @@ def clear_dialog(telegram_id: int) -> None:
             """,
             (telegram_id,),
         )
+
+
+def increment_user_message(telegram_id: int) -> None:
+    """Increase total and user message counters for a user."""
+    with conn:
+        conn.execute(
+            """
+            UPDATE users
+            SET messages_count = COALESCE(messages_count, 0) + 1,
+                user_messages = COALESCE(user_messages, 0) + 1
+            WHERE telegram_id = ?
+            """,
+            (telegram_id,),
+        )
+
+
+def increment_ai_message(telegram_id: int) -> None:
+    """Increase total and AI message counters for a user."""
+    with conn:
+        conn.execute(
+            """
+            UPDATE users
+            SET messages_count = COALESCE(messages_count, 0) + 1,
+                ai_messages = COALESCE(ai_messages, 0) + 1
+            WHERE telegram_id = ?
+            """,
+            (telegram_id,),
+        )
+
+
+def get_user_stats(telegram_id: int) -> Optional[Dict[str, Any]]:
+    """
+    Return statistics for a user:
+    - user_messages
+    - ai_messages
+    - messages_count
+    - created_at
+    """
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT
+            COALESCE(user_messages, 0) AS user_messages,
+            COALESCE(ai_messages, 0) AS ai_messages,
+            COALESCE(messages_count, 0) AS messages_count,
+            created_at
+        FROM users
+        WHERE telegram_id = ?
+        """,
+        (telegram_id,),
+    )
+    row = cur.fetchone()
+    if row is None:
+        return None
+
+    return {
+        "user_messages": row["user_messages"],
+        "ai_messages": row["ai_messages"],
+        "messages_count": row["messages_count"],
+        "created_at": row["created_at"],
+    }
+
 
