@@ -8,7 +8,12 @@ from aiogram.types import Message
 
 from .config import settings
 from .ai_service import generate_response
-from .dialog_manager import DialogManager
+from .database import (
+    create_user_if_not_exists,
+    save_message,
+    get_last_messages,
+    clear_dialog,
+)
 from .prompts import SYSTEM_PROMPT
 
 
@@ -20,9 +25,6 @@ logger = logging.getLogger(__name__)
 
 
 router = Router()
-
-# Manager that keeps separate dialog histories per Telegram user.
-dialog_manager = DialogManager(max_messages=6)
 
 
 @router.message(CommandStart())
@@ -55,7 +57,7 @@ async def cmd_help(message: Message) -> None:
 @router.message(Command("new"))
 async def cmd_new(message: Message) -> None:
     user_id = message.from_user.id if message.from_user else 0
-    dialog_manager.clear_history(user_id)
+    clear_dialog(user_id)
 
     text = (
         "Начинаем новый диалог. ✨\n\n"
@@ -74,19 +76,25 @@ async def handle_text_message(message: Message) -> None:
         await message.answer("Пожалуйста, отправь осмысленный текст на английском языке.")
         return
 
-    # Get current history for this user (separate per telegram_id).
-    history = dialog_manager.get_history(user_id)
+    # 1–2. Ensure user exists in DB.
+    create_user_if_not_exists(user_id)
 
-    # Build messages for OpenAI: system prompt + existing history + current user message.
+    # 3. Save user's message.
+    save_message(user_id, "user", user_text)
+
+    # 4. Get last N messages for this user (context limited in DB).
+    history = get_last_messages(user_id, limit=6)
+
+    # 5. Build messages for OpenAI: system prompt + existing history.
     messages: List[Dict[str, Any]] = [
         {"role": "system", "content": SYSTEM_PROMPT},
         *history,
-        {"role": "user", "content": user_text},
     ]
 
     await message.chat.action.typing()
 
     try:
+        # 5–6. Get AI response based on last messages.
         reply_text = await generate_response(messages)
     except Exception as exc:  # noqa: BLE001
         logger.exception("Failed to get response from OpenAI: %s", exc)
@@ -103,10 +111,10 @@ async def handle_text_message(message: Message) -> None:
         )
         return
 
-    # Update dialog history for this user: add user message and assistant reply.
-    dialog_manager.append_message(user_id, "user", user_text)
-    dialog_manager.append_message(user_id, "assistant", reply_text)
+    # 7. Save assistant reply to DB.
+    save_message(user_id, "assistant", reply_text)
 
+    # 8. Send reply to user.
     await message.answer(reply_text)
 
 
@@ -124,4 +132,5 @@ if __name__ == "__main__":
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
         logger.info("Bot stopped.")
+
 
