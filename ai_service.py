@@ -5,7 +5,6 @@ from typing import List, Dict, Any
 from openai import OpenAI, OpenAIError
 
 from .config import settings
-from .prompts import SYSTEM_PROMPT
 
 
 client = OpenAI(api_key=settings.openai_api_key)
@@ -26,19 +25,18 @@ def _call_openai(messages: List[Dict[str, Any]]) -> str:
     return choice.message.content or ""
 
 
-async def generate_tutor_reply(user_history: List[Dict[str, str]]) -> str:
+async def generate_response(messages: List[Dict[str, Any]]) -> str:
     """
     Generate a reply from the English tutor model.
 
-    `user_history` is a list of messages like:
-    [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]
-    Only the last few messages (context) should be passed in.
+    `messages` must already include the system prompt and full dialog context, for example:
+        [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": "..."},
+            {"role": "assistant", "content": "..."},
+            {"role": "user", "content": "last user message"},
+        ]
     """
-    messages: List[Dict[str, Any]] = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        *user_history,
-    ]
-
     loop = asyncio.get_running_loop()
     try:
         result: str = await loop.run_in_executor(None, partial(_call_openai, messages))

@@ -1,14 +1,15 @@
 import asyncio
 import logging
-from typing import Dict, List, Any
+from typing import List, Dict, Any
 
-from aiogram import Bot, Dispatcher, F
+from aiogram import Bot, Dispatcher, F, Router
 from aiogram.filters import CommandStart, Command
 from aiogram.types import Message
-from aiogram import Router
 
 from .config import settings
-from .ai_service import generate_tutor_reply
+from .ai_service import generate_response
+from .dialog_manager import DialogManager
+from .prompts import SYSTEM_PROMPT
 
 
 logging.basicConfig(
@@ -20,21 +21,8 @@ logger = logging.getLogger(__name__)
 
 router = Router()
 
-# In-memory storage for last messages per user.
-# Key: Telegram user id, Value: list of message dicts [{"role": "user"/"assistant", "content": "..."}]
-user_contexts: Dict[int, List[Dict[str, Any]]] = {}
-
-MAX_CONTEXT_MESSAGES = 10  # roughly last 5 exchanges (user + assistant)
-
-
-def _update_user_context(user_id: int, role: str, content: str) -> List[Dict[str, Any]]:
-    history = user_contexts.get(user_id, [])
-    history.append({"role": role, "content": content})
-    # keep only last N messages
-    if len(history) > MAX_CONTEXT_MESSAGES:
-        history = history[-MAX_CONTEXT_MESSAGES:]
-    user_contexts[user_id] = history
-    return history
+# Manager that keeps separate dialog histories per Telegram user.
+dialog_manager = DialogManager(max_messages=6)
 
 
 @router.message(CommandStart())
@@ -67,8 +55,7 @@ async def cmd_help(message: Message) -> None:
 @router.message(Command("new"))
 async def cmd_new(message: Message) -> None:
     user_id = message.from_user.id if message.from_user else 0
-    if user_id in user_contexts:
-        user_contexts.pop(user_id, None)
+    dialog_manager.clear_history(user_id)
 
     text = (
         "Начинаем новый диалог. ✨\n\n"
@@ -87,13 +74,20 @@ async def handle_text_message(message: Message) -> None:
         await message.answer("Пожалуйста, отправь осмысленный текст на английском языке.")
         return
 
-    # Update context with the latest user message and get recent history.
-    history = _update_user_context(user_id, "user", user_text)
+    # Get current history for this user (separate per telegram_id).
+    history = dialog_manager.get_history(user_id)
+
+    # Build messages for OpenAI: system prompt + existing history + current user message.
+    messages: List[Dict[str, Any]] = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        *history,
+        {"role": "user", "content": user_text},
+    ]
 
     await message.chat.action.typing()
 
     try:
-        reply_text = await generate_tutor_reply(history[-MAX_CONTEXT_MESSAGES:])
+        reply_text = await generate_response(messages)
     except Exception as exc:  # noqa: BLE001
         logger.exception("Failed to get response from OpenAI: %s", exc)
         await message.answer(
@@ -109,8 +103,9 @@ async def handle_text_message(message: Message) -> None:
         )
         return
 
-    # Save assistant reply to context.
-    _update_user_context(user_id, "assistant", reply_text)
+    # Update dialog history for this user: add user message and assistant reply.
+    dialog_manager.append_message(user_id, "user", user_text)
+    dialog_manager.append_message(user_id, "assistant", reply_text)
 
     await message.answer(reply_text)
 
