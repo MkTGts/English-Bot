@@ -9,7 +9,8 @@ load_dotenv()
 
 @dataclass
 class Settings:
-    gemini_api_key: str
+    timeweb_agent_id: str
+    timeweb_api_token: str
     telegram_bot_token: str
 
 
@@ -22,8 +23,9 @@ def _get_env(name: str) -> str:
         )
     return value
 
+
 settings = Settings(
-    gemini_api_key=_get_env("GEMINI_API_KEY"),
+    timeweb_agent_id=_get_env("TIMEWEB_AGENT_ID"),
+    timeweb_api_token=_get_env("TIMEWEB_API_TOKEN"),
     telegram_bot_token=_get_env("TELEGRAM_BOT_TOKEN"),
 )
-

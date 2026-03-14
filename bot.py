@@ -21,7 +21,6 @@ from database import (
     increment_ai_message,
     get_user_stats,
 )
-from prompts import SYSTEM_PROMPT
 
 
 logging.basicConfig(
@@ -134,17 +133,14 @@ async def handle_text_message(message: Message) -> None:
     # 4. Get last N messages for this user (context limited in DB).
     history = get_last_messages(user_id, limit=6)
 
-    # 5. Build messages for OpenAI: system prompt + existing history.
-    messages: List[Dict[str, Any]] = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        *history,
-    ]
+    # 5. Build messages for Timeweb AI (системный промпт задаётся в панели агента).
+    messages: List[Dict[str, Any]] = list(history)
 
     try:
         # 5–6. Get AI response based on last messages.
         reply_text = await generate_response(messages)
     except Exception as exc:  # noqa: BLE001
-        logger.exception("Failed to get response from OpenAI: %s", exc)
+        logger.exception("Failed to get response from Timeweb AI: %s", exc)
         await message.answer(
             "Произошла ошибка при обращении к нейросети. "
             "Попробуй ещё раз чуть позже."
