@@ -187,3 +187,34 @@ def get_user_stats(telegram_id: int) -> Optional[Dict[str, Any]]:
     }
 
 
+def get_all_users_stats() -> List[Dict[str, Any]]:
+    """
+    Return statistics for all users (telegram_id, user_messages, ai_messages,
+    messages_count, created_at), ordered by created_at.
+    """
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT
+            telegram_id,
+            COALESCE(user_messages, 0) AS user_messages,
+            COALESCE(ai_messages, 0) AS ai_messages,
+            COALESCE(messages_count, 0) AS messages_count,
+            created_at
+        FROM users
+        ORDER BY created_at ASC
+        """
+    )
+    rows = cur.fetchall()
+    return [
+        {
+            "telegram_id": row["telegram_id"],
+            "user_messages": row["user_messages"],
+            "ai_messages": row["ai_messages"],
+            "messages_count": row["messages_count"],
+            "created_at": row["created_at"],
+        }
+        for row in rows
+    ]
+
+

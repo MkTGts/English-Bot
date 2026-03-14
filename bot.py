@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from datetime import datetime
+from pathlib import Path
 from typing import List, Dict, Any
 
 from aiogram import Bot, Dispatcher, F, Router
@@ -20,14 +21,54 @@ from database import (
     increment_user_message,
     increment_ai_message,
     get_user_stats,
+    get_all_users_stats,
 )
 
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-)
+LOG_FILE = Path(__file__).resolve().parent / "bot.log"
+USERS_STATS_FILE = Path(__file__).resolve().parent / "users_stats.txt"
+LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+
+logging.basicConfig(level=logging.INFO, format=LOG_FORMAT)
+root = logging.getLogger()
+if not any(isinstance(h, logging.FileHandler) for h in root.handlers):
+    file_handler = logging.FileHandler(LOG_FILE, encoding="utf-8")
+    file_handler.setFormatter(logging.Formatter(LOG_FORMAT))
+    root.addHandler(file_handler)
+
 logger = logging.getLogger(__name__)
+
+
+def write_users_stats_file() -> None:
+    """Записать список всех пользователей и их статистику в users_stats.txt."""
+    users = get_all_users_stats()
+    lines = [
+        "Пользователи бота и статистика",
+        "Обновлено: " + datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "Всего пользователей: " + str(len(users)),
+        "",
+        "-" * 60,
+    ]
+    for u in users:
+        created = u["created_at"]
+        if created:
+            try:
+                dt = datetime.fromisoformat(str(created))
+                created = dt.strftime("%d.%m.%Y %H:%M")
+            except (ValueError, TypeError):
+                created = str(created)
+        lines.extend([
+            "",
+            f"Telegram ID: {u['telegram_id']}",
+            f"  Сообщений от пользователя: {u['user_messages']}",
+            f"  Ответов бота: {u['ai_messages']}",
+            f"  Всего в диалоге: {u['messages_count']}",
+            f"  Первое обращение: {created or '—'}",
+        ])
+    lines.append("")
+    text = "\n".join(lines)
+    USERS_STATS_FILE.write_text(text, encoding="utf-8")
+    logger.info("Обновлён файл пользователей: %s (%d записей)", USERS_STATS_FILE.name, len(users))
 
 
 router = Router()
@@ -162,6 +203,16 @@ async def handle_text_message(message: Message) -> None:
     await message.answer(reply_text)
 
 
+async def _periodic_users_stats_export() -> None:
+    """Периодически обновлять файл users_stats.txt (каждые 15 минут)."""
+    while True:
+        await asyncio.sleep(900)  # 15 min
+        try:
+            write_users_stats_file()
+        except Exception as e:  # noqa: BLE001
+            logger.exception("Ошибка при записи users_stats.txt: %s", e)
+
+
 async def main() -> None:
     bot = Bot(
         token=settings.telegram_bot_token,
@@ -179,6 +230,9 @@ async def main() -> None:
             BotCommand(command="stat", description="Показать мою статистику"),
         ]
     )
+
+    write_users_stats_file()
+    asyncio.create_task(_periodic_users_stats_export())
 
     logger.info("Bot is starting polling...")
     await dp.start_polling(bot)
